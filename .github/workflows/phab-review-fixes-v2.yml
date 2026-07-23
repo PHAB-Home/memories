@@ -1,0 +1,36 @@
+name: Run viewer selection review fixes
+
+on:
+  pull_request:
+    branches: [master]
+    types: [synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.head_ref == 'feature/viewer-multi-select'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/viewer-multi-select
+          fetch-depth: 0
+      - name: Apply fixes
+        run: python3 scripts/phab_review_fixes.py
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npx vue-tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Commit reviewed source
+        run: |
+          set -euo pipefail
+          git config user.name "NordicPaws"
+          git config user.email "248070006+NordicPaws@users.noreply.github.com"
+          git rm -r -f --ignore-unmatch js
+          git add src/components/viewer/Viewer.vue
+          git commit -m "fix: preserve selection scope and expose viewer action"
+          git push origin HEAD:feature/viewer-multi-select
