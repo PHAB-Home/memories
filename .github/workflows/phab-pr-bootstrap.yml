@@ -1,0 +1,62 @@
+name: Bootstrap viewer selection from PR
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'feature/viewer-multi-select'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/viewer-multi-select
+          fetch-depth: 0
+
+      - name: Execute the validated patch script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml
+          python3 <<'PY'
+          import subprocess
+          import yaml
+
+          with open('.github/workflows/phab-apply-viewer-selection.yml') as handle:
+              workflow = yaml.safe_load(handle)
+
+          steps = workflow['jobs']['apply']['steps']
+          patch_step = next(step for step in steps if step.get('name') == 'Apply the viewer multi-select implementation')
+          subprocess.run(['bash', '-euo', 'pipefail', '-c', patch_step['run']], check=True)
+          PY
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check Vue and TypeScript
+        run: npx vue-tsc --noEmit
+
+      - name: Build production frontend
+        run: npm run build
+
+      - name: Commit implementation and build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "NordicPaws"
+          git config user.email "248070006+NordicPaws@users.noreply.github.com"
+          git rm .github/workflows/phab-apply-viewer-selection.yml .github/workflows/phab-pr-bootstrap.yml
+          git add appinfo/info.xml package.json package-lock.json src js
+          git commit -m "feat: select photos from the viewer [viewer-selection-applied]"
+          git push origin HEAD:feature/viewer-multi-select
