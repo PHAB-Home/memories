@@ -93,6 +93,7 @@
 
     <SelectionManager
       ref="selectionManager"
+      :timeline-id="timelineId"
       :heads="heads"
       :rows="list"
       :isreverse="isMonthView"
@@ -161,6 +162,9 @@ export default defineComponent({
   },
 
   data: () => ({
+    /** Identity used to scope viewer selection events to this timeline. */
+    timelineId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+
     /** Loading days response */
     loading: 0,
     /** Main list of rows */

@@ -144,6 +144,10 @@ export default defineComponent({
   mixins: [UserConfig],
 
   props: {
+    timelineId: {
+      type: String,
+      required: true,
+    },
     heads: {
       type: Map as PropType<Map<number, IHeadRow>>,
       required: true,
@@ -295,23 +299,43 @@ export default defineComponent({
     }
 
     // Subscribe to global events
+    utils.bus.on('memories:selection:toggle', this.handleViewerToggle);
+    utils.bus.on('memories:selection:sync', this.handleViewerSync);
     utils.bus.on('memories:albums:update', this.clear);
     utils.bus.on('memories:fragment:pop:selection', this.clear);
   },
 
   beforeDestroy() {
     // Unsubscribe from global events
+    utils.bus.off('memories:selection:toggle', this.handleViewerToggle);
+    utils.bus.off('memories:selection:sync', this.handleViewerSync);
     utils.bus.off('memories:albums:update', this.clear);
     utils.bus.off('memories:fragment:pop:selection', this.clear);
   },
 
   watch: {
-    show(value: boolean, from: boolean) {
+    show(value: boolean) {
+      // While the viewer is open it must remain the top route fragment so
+      // slide changes and browser history continue to work. Selection is
+      // synchronized after the viewer fragment has been removed.
+      if (_m.viewer.isOpen) return;
       utils.fragment.if(value, utils.fragment.types.selection);
     },
   },
 
   methods: {
+    /** Handle a selection request from the viewer for this timeline. */
+    handleViewerToggle({ timelineId, photo }: { timelineId: string; photo: IPhoto }) {
+      if (timelineId !== this.timelineId) return;
+      this.selectPhoto(photo);
+    },
+
+    /** Synchronize the selection route fragment after the viewer closes. */
+    handleViewerSync({ timelineId }: { timelineId: string }) {
+      if (timelineId !== this.timelineId) return;
+      utils.fragment.if(this.show, utils.fragment.types.selection);
+    },
+
     deleteSelectedPhotosById(delIds: number[], selection: Selection) {
       utils.bus.emit('memories:timeline:deleted', selection.photosFromFileIds(delIds));
     },

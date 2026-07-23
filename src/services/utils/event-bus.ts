@@ -48,6 +48,11 @@ export type BusEvent = {
   /** Albums were updated for these photos */
   'memories:albums:update': IPhoto[];
 
+  /** Toggle a photo in the active timeline selection from the viewer. */
+  'memories:selection:toggle': { timelineId: string; photo: IPhoto };
+  /** Synchronize the timeline selection fragment after the viewer closes. */
+  'memories:selection:sync': { timelineId: string };
+
   /** NativeX database was updated */
   'nativex:db:updated': null;
 } & {

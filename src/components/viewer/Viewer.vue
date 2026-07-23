@@ -89,6 +89,8 @@ import EditFileIcon from 'vue-material-design-icons/FileEdit.vue';
 import AlbumRemoveIcon from 'vue-material-design-icons/BookRemove.vue';
 import AlbumIcon from 'vue-material-design-icons/ImageAlbum.vue';
 import RotateLeftIcon from 'vue-material-design-icons/RotateLeft.vue';
+import CheckCircleIcon from 'vue-material-design-icons/CheckCircle.vue';
+import CheckboxBlankCircleOutlineIcon from 'vue-material-design-icons/CheckboxBlankCircleOutline.vue';
 
 type IViewerAction = {
   /** Identifier (optional) */
@@ -154,6 +156,7 @@ export default defineComponent({
     globalCount: 0,
     globalAnchor: -1,
     currIndex: -1,
+    timelineId: null as string | null,
 
     /** Timer to move to next photo */
     slideshowTimer: 0,
@@ -231,6 +234,13 @@ export default defineComponent({
     /** Get all actions to show */
     actions(): IViewerAction[] {
       return [
+        {
+          id: 'select',
+          name: this.isSelected ? this.t('memories', 'Deselect') : this.t('memories', 'Select'),
+          icon: this.isSelected ? CheckCircleIcon : CheckboxBlankCircleOutlineIcon,
+          callback: this.toggleSelectCurrent,
+          if: Boolean(this.timelineId && this.currentPhoto),
+        },
         {
           id: 'share',
           name: this.t('memories', 'Share'),
@@ -361,6 +371,11 @@ export default defineComponent({
     /** Is the current slide a local photo */
     isLocal(): boolean {
       return utils.isLocalPhoto(this.currentPhoto!);
+    },
+
+    /** Is the current photo selected in the active timeline */
+    isSelected(): boolean {
+      return Boolean((this.currentPhoto?.flag ?? 0) & this.c.FLAG_SELECTED);
     },
 
     /** Is the current photo a favorite */
@@ -626,6 +641,7 @@ export default defineComponent({
         this.list = [];
         this.globalCount = 0;
         this.globalAnchor = -1;
+        this.timelineId = null;
         clearTimeout(this.slideshowTimer);
         this.slideshowTimer = 0;
       });
@@ -692,7 +708,7 @@ export default defineComponent({
     },
 
     /** Set the route hash to the given photo */
-    setFragment(photo: IPhoto | null) {
+    async setFragment(photo: IPhoto | null) {
       // Add or update fragment
       if (photo) {
         return utils.fragment.push(utils.fragment.types.viewer, String(photo.dayid), photo.key!);
@@ -700,7 +716,14 @@ export default defineComponent({
 
       // Remove fragment if closed
       if (!this.isOpen) {
-        return utils.fragment.pop(utils.fragment.types.viewer);
+        // PhotoSwipe destroys the viewer state while route navigation is
+        // awaiting. Preserve the owning timeline before yielding.
+        const timelineId = this.timelineId;
+        await utils.fragment.pop(utils.fragment.types.viewer);
+        if (timelineId) {
+          utils.bus.emit('memories:selection:sync', { timelineId });
+        }
+        return;
       }
     },
 
@@ -711,6 +734,7 @@ export default defineComponent({
         console.error('Attempted to open viewer with no detail list!');
         return;
       }
+      this.timelineId = timeline.timelineId;
 
       // Helper to compute the global anchor and count
       // Anchor is the global index of the first list item
@@ -892,6 +916,7 @@ export default defineComponent({
 
     /** Open with a static list of photos */
     async openStatic(photo: IPhoto, list: IPhoto[], thumbSize?: 256 | 512) {
+      this.timelineId = null;
       this.list = list;
       const photoswipe = await this.createBase({
         index: list.findIndex((p) => p.fileid === photo.fileid),
@@ -1036,6 +1061,20 @@ export default defineComponent({
     keydown(e: KeyboardEvent) {
       if (e.defaultPrevented) return;
 
+      if (e.key === ' ' && this.timelineId) {
+        const target = e.target;
+        const editing =
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          target instanceof HTMLButtonElement ||
+          (target instanceof HTMLElement && target.isContentEditable);
+        if (!editing) {
+          e.preventDefault();
+          this.toggleSelectCurrent();
+        }
+      }
+
       if (e.key === 'Delete') {
         this.deleteCurrent();
       }
@@ -1055,6 +1094,15 @@ export default defineComponent({
       if (e.key === 'M' && e.shiftKey) {
         this.editMetadata();
       }
+    },
+
+    /** Toggle selection of the current photo in the owning timeline. */
+    toggleSelectCurrent() {
+      if (!this.timelineId || !this.currentPhoto) return;
+      utils.bus.emit('memories:selection:toggle', {
+        timelineId: this.timelineId,
+        photo: this.currentPhoto,
+      });
     },
 
     /** Delete this photo and refresh */
