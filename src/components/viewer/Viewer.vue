@@ -235,6 +235,13 @@ export default defineComponent({
     actions(): IViewerAction[] {
       return [
         {
+          id: 'select',
+          name: this.isSelected ? this.t('memories', 'Deselect') : this.t('memories', 'Select'),
+          icon: this.isSelected ? CheckCircleIcon : CheckboxBlankCircleOutlineIcon,
+          callback: this.toggleSelectCurrent,
+          if: Boolean(this.timelineId && this.currentPhoto),
+        },
+        {
           id: 'share',
           name: this.t('memories', 'Share'),
           icon: ShareIcon,
@@ -272,13 +279,6 @@ export default defineComponent({
           icon: this.isFavorite ? StarIcon : StarOutlineIcon,
           callback: this.favoriteCurrent,
           if: !this.routeIsPublic && !this.isLocal,
-        },
-        {
-          id: 'select',
-          name: this.isSelected ? this.t('memories', 'Deselect') : this.t('memories', 'Select'),
-          icon: this.isSelected ? CheckCircleIcon : CheckboxBlankCircleOutlineIcon,
-          callback: this.toggleSelectCurrent,
-          if: Boolean(this.timelineId && this.currentPhoto),
         },
         {
           id: 'info',
@@ -716,9 +716,12 @@ export default defineComponent({
 
       // Remove fragment if closed
       if (!this.isOpen) {
+        // PhotoSwipe destroys the viewer state while route navigation is
+        // awaiting. Preserve the owning timeline before yielding.
+        const timelineId = this.timelineId;
         await utils.fragment.pop(utils.fragment.types.viewer);
-        if (this.timelineId) {
-          utils.bus.emit('memories:selection:sync', { timelineId: this.timelineId });
+        if (timelineId) {
+          utils.bus.emit('memories:selection:sync', { timelineId });
         }
         return;
       }
@@ -726,12 +729,12 @@ export default defineComponent({
 
     /** Open using start photo and rows list */
     async openDynamic(anchorPhoto: IPhoto, timeline: TimelineState) {
-      this.timelineId = timeline.timelineId;
       const detail = anchorPhoto.d?.detail;
       if (!detail?.length) {
         console.error('Attempted to open viewer with no detail list!');
         return;
       }
+      this.timelineId = timeline.timelineId;
 
       // Helper to compute the global anchor and count
       // Anchor is the global index of the first list item
