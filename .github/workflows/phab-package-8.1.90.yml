@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           tar --sort=name --mtime='UTC 2026-07-23' --owner=0 --group=0 --numeric-owner \
             -czf package-output/memories-8.1.90.tar.gz -C dist memories
-          sha256sum package-output/memories-8.1.90.tar.gz > package-output/memories-8.1.90.tar.gz.sha256
+          (cd package-output && sha256sum memories-8.1.90.tar.gz > memories-8.1.90.tar.gz.sha256)
 
           cat > package-output/install-memories-8.1.90.sh <<'SCRIPT'
           #!/usr/bin/env bash
@@ -112,14 +112,19 @@ jobs:
             echo "Archive not found: $ARCHIVE" >&2
             exit 1
           fi
+          ARCHIVE="$(realpath "$ARCHIVE")"
 
           if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
             echo "Nextcloud container not found: $CONTAINER" >&2
             exit 1
           fi
 
-          if [ -f "${ARCHIVE}.sha256" ]; then
-            sha256sum -c "${ARCHIVE}.sha256"
+          CHECKSUM="${ARCHIVE}.sha256"
+          if [ -f "$CHECKSUM" ]; then
+            (
+              cd "$(dirname "$ARCHIVE")"
+              sha256sum -c "$(basename "$CHECKSUM")"
+            )
           fi
 
           APP_PATH="$(docker exec -u www-data "$CONTAINER" php occ app:getpath memories)"
@@ -147,21 +152,24 @@ jobs:
           rollback() {
             echo "Installation failed; restoring $BACKUP" >&2
             docker exec "$CONTAINER" sh -eu -c \
-              "rm -rf '$APP_PATH'; if [ -d '$BACKUP' ]; then mv '$BACKUP' '$APP_PATH'; fi; rm -rf '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
+              "rm -rf '$APP_PATH'; if [ -d '$BACKUP/.appinfo-disabled' ]; then mv '$BACKUP/.appinfo-disabled' '$BACKUP/appinfo'; fi; if [ -d '$BACKUP' ]; then mv '$BACKUP' '$APP_PATH'; fi; rm -rf '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
             docker exec -u www-data "$CONTAINER" php occ app:enable memories >/dev/null || true
           }
           trap rollback ERR
 
           docker exec "$CONTAINER" sh -eu -c \
-            "test -d '$APP_PATH'; mv '$APP_PATH' '$BACKUP'; mv '$STAGE/memories' '$APP_PATH'; rmdir '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
+            "test -d '$APP_PATH'; test -d '$APP_PATH/appinfo'; mv '$APP_PATH' '$BACKUP'; mv '$BACKUP/appinfo' '$BACKUP/.appinfo-disabled'; mv '$STAGE/memories' '$APP_PATH'; rmdir '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
 
           docker exec -u www-data "$CONTAINER" php occ app:enable memories >/dev/null
-          INSTALLED_VERSION="$(docker exec -u www-data "$CONTAINER" php occ app:list --output=json | php -r '$d=json_decode(stream_get_contents(STDIN),true); echo $d["enabled"]["memories"] ?? "";')"
-          test "$INSTALLED_VERSION" = "8.1.90"
+          APP_LIST="$(docker exec -u www-data "$CONTAINER" php occ app:list --output=json)"
+          if ! printf '%s' "$APP_LIST" | tr -d '[:space:]' | grep -Fq '"memories":"8.1.90"'; then
+            echo "Installed Memories version could not be verified as 8.1.90" >&2
+            exit 1
+          fi
 
           trap - ERR
-          echo "Memories $INSTALLED_VERSION installed successfully."
-          echo "Rollback copy retained at: $BACKUP"
+          echo "Memories 8.1.90 installed successfully."
+          echo "Inactive rollback copy retained at: $BACKUP"
           SCRIPT
 
           chmod 755 package-output/install-memories-8.1.90.sh
@@ -180,11 +188,16 @@ jobs:
           Installation:
             chmod +x install-memories-8.1.90.sh
             ./install-memories-8.1.90.sh memories-8.1.90.tar.gz
+
+          The installer retains an inactive rollback copy beside the app directory.
+          Its appinfo directory is renamed so Nextcloud cannot detect it as a second app.
           README
 
       - name: Inspect package contents
         run: |
           tar -tzf package-output/memories-8.1.90.tar.gz | sed -n '1,80p'
+          (cd package-output && sha256sum -c memories-8.1.90.tar.gz.sha256)
+          bash -n package-output/install-memories-8.1.90.sh
           du -sh package-output/*
 
       - name: Upload distribution artifact
