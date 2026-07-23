@@ -4,17 +4,27 @@ on:
   push:
     branches:
       - build/memories-8.1.90
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: read
 
 jobs:
   package:
+    if: github.event_name == 'push' || github.head_ref == 'build/memories-8.1.90'
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out build branch
         uses: actions/checkout@v4
+        with:
+          ref: build/memories-8.1.90
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
