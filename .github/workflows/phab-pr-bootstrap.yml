@@ -27,9 +27,9 @@ jobs:
       - name: Execute the validated patch script
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           python3 -m pip install --quiet pyyaml
-          python3 <<'PY'
+          python3 <<'PY' >bootstrap-error.txt 2>&1
           import subprocess
           import yaml
 
@@ -40,6 +40,16 @@ jobs:
           patch_step = next(step for step in steps if step.get('name') == 'Apply the viewer multi-select implementation')
           subprocess.run(['bash', '-euo', 'pipefail', '-c', patch_step['run']], check=True)
           PY
+          status=$?
+          cat bootstrap-error.txt
+          exit "$status"
+
+      - name: Upload patch failure details
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-error
+          path: bootstrap-error.txt
 
       - name: Install frontend dependencies
         run: npm ci
