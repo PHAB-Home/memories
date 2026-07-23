@@ -30,6 +30,7 @@ jobs:
           set +e
           python3 -m pip install --quiet pyyaml
           python3 <<'PY' >bootstrap-error.txt 2>&1
+          from pathlib import Path
           import subprocess
           import yaml
 
@@ -38,7 +39,23 @@ jobs:
 
           steps = workflow['jobs']['apply']['steps']
           patch_step = next(step for step in steps if step.get('name') == 'Apply the viewer multi-select implementation')
-          subprocess.run(['bash', '-euo', 'pipefail', '-c', patch_step['run']], check=True)
+          script = '\n'.join(
+              line
+              for line in patch_step['run'].splitlines()
+              if not line.startswith("replace_once('package-lock.json'")
+          )
+          subprocess.run(['bash', '-euo', 'pipefail', '-c', script], check=True)
+
+          lock_path = Path('package-lock.json')
+          lock = lock_path.read_text()
+          root_old = '{\n  "name": "memories",\n  "version": "8.1.0",'
+          root_new = '{\n  "name": "memories",\n  "version": "8.1.90",'
+          package_old = '    "": {\n      "name": "memories",\n      "version": "8.1.0",'
+          package_new = '    "": {\n      "name": "memories",\n      "version": "8.1.90",'
+          if lock.count(root_old) != 1 or lock.count(package_old) != 1:
+              raise RuntimeError('Could not identify the two Memories package-lock version fields')
+          lock = lock.replace(root_old, root_new, 1).replace(package_old, package_new, 1)
+          lock_path.write_text(lock)
           PY
           status=$?
           cat bootstrap-error.txt
