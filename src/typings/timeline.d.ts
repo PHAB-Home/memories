@@ -21,6 +21,7 @@ declare module '@typings' {
   };
 
   export interface TimelineState {
+    timelineId: string;
     list: IRow[];
     heads: Map<number, IHeadRow>;
   }
