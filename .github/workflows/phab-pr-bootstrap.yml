@@ -83,7 +83,9 @@ jobs:
           set -euo pipefail
           git config user.name "NordicPaws"
           git config user.email "248070006+NordicPaws@users.noreply.github.com"
-          git rm .github/workflows/phab-apply-viewer-selection.yml .github/workflows/phab-pr-bootstrap.yml
-          git add appinfo/info.xml package.json package-lock.json src js
+          git add appinfo/info.xml package.json package-lock.json src
+          if [ -d js ]; then
+            git add -f js
+          fi
           git commit -m "feat: select photos from the viewer [viewer-selection-applied]"
           git push origin HEAD:feature/viewer-multi-select
