@@ -132,6 +132,7 @@ jobs:
             echo "Could not resolve the installed Memories path" >&2
             exit 1
           fi
+          OLD_VERSION="$(docker exec -u www-data "$CONTAINER" php occ config:app:get memories installed_version 2>/dev/null || true)"
 
           PARENT="$(dirname "$APP_PATH")"
           STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -139,9 +140,10 @@ jobs:
           STAGE="${PARENT}/.memories-stage-${STAMP}"
           REMOTE_ARCHIVE="/tmp/memories-8.1.90-${STAMP}.tar.gz"
 
-          echo "Container : $CONTAINER"
-          echo "App path  : $APP_PATH"
-          echo "Backup    : $BACKUP"
+          echo "Container   : $CONTAINER"
+          echo "App path    : $APP_PATH"
+          echo "Old version : ${OLD_VERSION:-unknown}"
+          echo "Backup      : $BACKUP"
 
           docker cp "$ARCHIVE" "$CONTAINER:$REMOTE_ARCHIVE"
           docker exec "$CONTAINER" sh -eu -c \
@@ -153,6 +155,9 @@ jobs:
             echo "Installation failed; restoring $BACKUP" >&2
             docker exec "$CONTAINER" sh -eu -c \
               "rm -rf '$APP_PATH'; if [ -d '$BACKUP/.appinfo-disabled' ]; then mv '$BACKUP/.appinfo-disabled' '$BACKUP/appinfo'; fi; if [ -d '$BACKUP' ]; then mv '$BACKUP' '$APP_PATH'; fi; rm -rf '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
+            if [ -n "$OLD_VERSION" ]; then
+              docker exec -u www-data "$CONTAINER" php occ config:app:set memories installed_version --value="$OLD_VERSION" >/dev/null || true
+            fi
             docker exec -u www-data "$CONTAINER" php occ app:enable memories >/dev/null || true
           }
           trap rollback ERR
@@ -191,6 +196,7 @@ jobs:
 
           The installer retains an inactive rollback copy beside the app directory.
           Its appinfo directory is renamed so Nextcloud cannot detect it as a second app.
+          On automatic rollback, the previous stored app version is restored before re-enabling Memories.
           README
 
       - name: Inspect package contents
@@ -198,6 +204,7 @@ jobs:
           tar -tzf package-output/memories-8.1.90.tar.gz | sed -n '1,80p'
           (cd package-output && sha256sum -c memories-8.1.90.tar.gz.sha256)
           bash -n package-output/install-memories-8.1.90.sh
+          grep -Fq 'config:app:set memories installed_version' package-output/install-memories-8.1.90.sh
           du -sh package-output/*
 
       - name: Upload distribution artifact
