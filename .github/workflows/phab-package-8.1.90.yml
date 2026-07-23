@@ -1,0 +1,186 @@
+name: Package Memories 8.1.90
+
+on:
+  push:
+    branches:
+      - build/memories-8.1.90
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out build branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Set up PHP and Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rsync unzip wget
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Fetch runtime binaries
+        run: bash scripts/get-bin-ext.sh
+
+      - name: Install production PHP dependencies
+        run: composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+
+      - name: Apply upstream dependency patches
+        run: bash scripts/patch-external.sh
+
+      - name: Type-check frontend
+        run: npx vue-tsc --noEmit
+
+      - name: Build production frontend
+        run: |
+          rm -f js/*
+          npm run build
+
+      - name: Stage runtime app
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist package-output
+          mkdir -p dist/memories package-output
+
+          for item in appinfo bin-ext css img js l10n lib templates vendor; do
+            if [ -e "$item" ]; then
+              cp -a "$item" dist/memories/
+            fi
+          done
+
+          for item in COPYING LICENSE README.md; do
+            if [ -e "$item" ]; then
+              cp -a "$item" dist/memories/
+            fi
+          done
+
+          rm -f dist/memories/appinfo/signature.json
+
+          test -f dist/memories/appinfo/info.xml
+          test -f dist/memories/js/memories-main.js
+          test -d dist/memories/lib
+          test -d dist/memories/vendor
+          test -x dist/memories/bin-ext/go-vod-aarch64
+          test -x dist/memories/bin-ext/go-vod-amd64
+
+          version="$(php -r '$x=simplexml_load_file("dist/memories/appinfo/info.xml"); echo (string)$x->version;')"
+          test "$version" = "8.1.90"
+
+      - name: Create archive and installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --sort=name --mtime='UTC 2026-07-23' --owner=0 --group=0 --numeric-owner \
+            -czf package-output/memories-8.1.90.tar.gz -C dist memories
+          sha256sum package-output/memories-8.1.90.tar.gz > package-output/memories-8.1.90.tar.gz.sha256
+
+          cat > package-output/install-memories-8.1.90.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          ARCHIVE="${1:-memories-8.1.90.tar.gz}"
+          CONTAINER="${NEXTCLOUD_CONTAINER:-nextcloud}"
+
+          if [ ! -f "$ARCHIVE" ]; then
+            echo "Archive not found: $ARCHIVE" >&2
+            exit 1
+          fi
+
+          if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+            echo "Nextcloud container not found: $CONTAINER" >&2
+            exit 1
+          fi
+
+          if [ -f "${ARCHIVE}.sha256" ]; then
+            sha256sum -c "${ARCHIVE}.sha256"
+          fi
+
+          APP_PATH="$(docker exec -u www-data "$CONTAINER" php occ app:getpath memories)"
+          if [ -z "$APP_PATH" ] || [ "$APP_PATH" = "/" ]; then
+            echo "Could not resolve the installed Memories path" >&2
+            exit 1
+          fi
+
+          PARENT="$(dirname "$APP_PATH")"
+          STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          BACKUP="${APP_PATH}.backup-${STAMP}"
+          STAGE="${PARENT}/.memories-stage-${STAMP}"
+          REMOTE_ARCHIVE="/tmp/memories-8.1.90-${STAMP}.tar.gz"
+
+          echo "Container : $CONTAINER"
+          echo "App path  : $APP_PATH"
+          echo "Backup    : $BACKUP"
+
+          docker cp "$ARCHIVE" "$CONTAINER:$REMOTE_ARCHIVE"
+          docker exec "$CONTAINER" sh -eu -c \
+            "rm -rf '$STAGE'; mkdir -p '$STAGE'; tar -xzf '$REMOTE_ARCHIVE' -C '$STAGE'; test -f '$STAGE/memories/appinfo/info.xml'; chown -R www-data:www-data '$STAGE/memories'"
+
+          docker exec -u www-data "$CONTAINER" php occ app:disable memories >/dev/null || true
+
+          rollback() {
+            echo "Installation failed; restoring $BACKUP" >&2
+            docker exec "$CONTAINER" sh -eu -c \
+              "rm -rf '$APP_PATH'; if [ -d '$BACKUP' ]; then mv '$BACKUP' '$APP_PATH'; fi; rm -rf '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
+            docker exec -u www-data "$CONTAINER" php occ app:enable memories >/dev/null || true
+          }
+          trap rollback ERR
+
+          docker exec "$CONTAINER" sh -eu -c \
+            "test -d '$APP_PATH'; mv '$APP_PATH' '$BACKUP'; mv '$STAGE/memories' '$APP_PATH'; rmdir '$STAGE'; rm -f '$REMOTE_ARCHIVE'"
+
+          docker exec -u www-data "$CONTAINER" php occ app:enable memories >/dev/null
+          INSTALLED_VERSION="$(docker exec -u www-data "$CONTAINER" php occ app:list --output=json | php -r '$d=json_decode(stream_get_contents(STDIN),true); echo $d["enabled"]["memories"] ?? "";')"
+          test "$INSTALLED_VERSION" = "8.1.90"
+
+          trap - ERR
+          echo "Memories $INSTALLED_VERSION installed successfully."
+          echo "Rollback copy retained at: $BACKUP"
+          SCRIPT
+
+          chmod 755 package-output/install-memories-8.1.90.sh
+
+          cat > package-output/README.txt <<'README'
+          Memories 8.1.90 — viewer multi-select build
+
+          Files:
+          - memories-8.1.90.tar.gz: complete Nextcloud app package
+          - memories-8.1.90.tar.gz.sha256: checksum
+          - install-memories-8.1.90.sh: Docker installer with automatic rollback
+
+          Default container name: nextcloud
+          Override with: NEXTCLOUD_CONTAINER=<name>
+
+          Installation:
+            chmod +x install-memories-8.1.90.sh
+            ./install-memories-8.1.90.sh memories-8.1.90.tar.gz
+          README
+
+      - name: Inspect package contents
+        run: |
+          tar -tzf package-output/memories-8.1.90.tar.gz | sed -n '1,80p'
+          du -sh package-output/*
+
+      - name: Upload distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memories-8.1.90-distribution
+          path: package-output/
+          if-no-files-found: error
+          retention-days: 90
