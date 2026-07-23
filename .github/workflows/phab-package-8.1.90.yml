@@ -169,7 +169,7 @@ jobs:
           APP_LIST="$(docker exec -u www-data "$CONTAINER" php occ app:list --output=json)"
           if ! printf '%s' "$APP_LIST" | tr -d '[:space:]' | grep -Fq '"memories":"8.1.90"'; then
             echo "Installed Memories version could not be verified as 8.1.90" >&2
-            exit 1
+            false
           fi
 
           trap - ERR
@@ -205,6 +205,7 @@ jobs:
           (cd package-output && sha256sum -c memories-8.1.90.tar.gz.sha256)
           bash -n package-output/install-memories-8.1.90.sh
           grep -Fq 'config:app:set memories installed_version' package-output/install-memories-8.1.90.sh
+          grep -Fq '            false' .github/workflows/phab-package-8.1.90.yml
           du -sh package-output/*
 
       - name: Upload distribution artifact
